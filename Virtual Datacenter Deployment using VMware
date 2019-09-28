@@ -1,0 +1,38 @@
+# 28 Sep 2019
+# Automated Virtual Datacenter Deployment using PowerCLI
+
+# Create new Datacenter
+$dc = New-Datacenter -location (Get-Folder -NoRecursion) -Name vDatacenter
+
+# Create new Clusters
+New-Cluster -Name iSCSI_Cluster -Location $dc
+New-Cluster -Name vSAN_Cluster -Location $dc
+
+# Creating array for esxi hosts followed by their relevant IP addresses
+$esxiHosts = @("esxi21.v.lab", "esxi22.v.lab", "esxi23.v.lab", "esxi24.v.lab", "esxi25.v.lab")
+$esxiIP = @(192.168.2.21, 192.168.2.22; 192.168.2.23; 192.168.2.24; 192.168.2.25)
+
+$ Adding hosts to datacenter cluster
+@("esxi21.v.lab","esxi22.v.lab","esxi23.v.lab") | ForEach-Object {Add-VMHost $_ -User root -Password "" -Location vSAN_Cluster -force}
+@("esxi24.v.lab","esxi25.v.lab") | ForEach-Object {Add-VMHost $_ -User root -Password "" -Location iSCSI_Cluster -force}
+
+# Adding a new vmkernel to the default vSwitch to add redundant management kernel
+$esxiHosts = @("esxi21.v.lab", "esxi22.v.lab", "esxi23.v.lab", "esxi24.v.lab", "esxi25.v.lab")
+$ipSuffix = 31..35
+for($i = 0; $i -lt $esxiHosts.Count; $i++)
+{
+    $ipa = "192.168.2.$($ipSuffix[$i])"
+    New-VMHostNetworkAdapter -VMhost $esxiHosts[$i] -PortGroup ManagementNetwork2 -IP $ipa -subnetmask 255.255.255.0 -VirtualSwitch vSwitch0 -ManagementTrafficEnabled $true
+}
+
+# Creating new virtual switches, adding NIC and vmkernels with IP addresses
+$hosts = Get-VMhost -name $esxiHosts
+$esxiHosts | foreach-object {New-VirtualSwitch $_ -Name NFSSwitch -NIC vmnic1}
+$ipSuffix = 21..25
+for($i = 0; $i -lt $esxiHosts.Count; $i++)
+{
+    $ipa = "192.168.3.$($ipSuffix[$i])"
+    New-VMHostNetworkAdapter -VMhost $esxiHosts[$i] -PortGroup NFS -IP $ipa -subnetmask 255.255.255.0 -VirtualSwitch NFSSwitch
+}
+
+#.. To be Continued..
