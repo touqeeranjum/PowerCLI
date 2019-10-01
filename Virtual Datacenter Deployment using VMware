@@ -16,7 +16,7 @@ $ Adding hosts to datacenter cluster
 @("esxi21.v.lab","esxi22.v.lab","esxi23.v.lab") | ForEach-Object {Add-VMHost $_ -User root -Password "" -Location vSAN_Cluster -force}
 @("esxi24.v.lab","esxi25.v.lab") | ForEach-Object {Add-VMHost $_ -User root -Password "" -Location iSCSI_Cluster -force}
 
-# Add redundant NIC vmnic1 to vSwitch0 ***
+# Add redundant NIC vmnic1 to vSwitch0
 Get-VMhost -name $esxiHosts |
 foreach-object {
    $nic = Get-VMHostNetworkAdapter -VMHost $_ -Physical -Name "vmnic1"
