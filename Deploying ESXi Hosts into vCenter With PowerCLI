@@ -1,0 +1,34 @@
+# 09 Oct 2019
+# Script to deploy Esxi Hosts into vCenter, add NIC, attach VMKernel, and add IP addresses, all from a CSV file
+
+### CODE TO INSTALL ESXI HOSTS AND CONFIGURE THEIR NETWORK
+$dc = New-Datacenter -location (Get-Folder -NoRecursion) -Name vDatacenter
+New-Cluster -Name iSCSI_Cluster -Location $dc
+New-Cluster -Name vSAN_Cluster -Location $dc
+
+$csvFile = Import-CSV -Path C:\Users\Administrator\Desktop\esxiHostsDeployment.csv
+
+foreach ($val in $csvFile)
+   {
+      $esxiHosts = $val.Hosts
+      $clusterName = $val.Cluster
+      $virtualSwitch = $val.Switch
+      $nic = $val.NIC
+      $vmK = $val.VMK
+      $ip = $val.IP
+
+      Add-vmhost $esxiHosts -User root -Password "" -Location $clusterName -Force -ErrorAction SilentlyContinue
+
+      try
+         {
+            $gSwitch = Get-VirtualSwitch -Name $virtualSwitch -VMHost $esxiHosts -ErrorAction Stop
+         }
+      catch
+         {
+            $gSwitch = New-VirtualSwitch -Name $virtualSwitch -VMHost $esxiHosts
+         }
+
+      $nAdapter = Get-VMHostNetworkAdapter -VMHost $esxiHosts -Physical -Name $nic
+      $gSwitch | Add-VirtualSwitchPhysicalNetworkAdapter -VMHostPhysicalNic $nAdapter -Confirm:$false
+      New-VMHostNetworkAdapter -VMhost $esxiHosts -PortGroup $vmK -IP $ip -subnetmask 255.255.255.0 -VirtualSwitch $gSwitch -confirm:$false
+   }
