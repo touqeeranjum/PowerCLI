@@ -1,14 +1,69 @@
 # 09 Oct 2019
-# Script to deploy Esxi Hosts into vCenter, add NIC, attach VMKernel, and add IP addresses, all from a CSV file
+# Script to configure NFS, iSCSI service and disks in Windows Server, and deploy Esxi Hosts into vCenter, add NIC, attach VMKernel, and add IP addresses, configure NFS and iSCSI network storage, from a CSV file
 
-# CODE TO INSTALL ESXI HOSTS AND CONFIGURE THEIR NETWORK
-Start-Transcript -path C:\output.txt -append # Captures all actions during script runtime
-$dc = New-Datacenter -location (Get-Folder -NoRecursion) -Name vDatacenter
-New-Cluster -Name iSCSI_Cluster -Location $dc
-New-Cluster -Name vSAN_Cluster -Location $dc -HAEnabled -DRSEnabled -VsanEnabled
+# Captures all actions during script runtime and saves output to a txt file
+Start-Transcript -path C:\output.txt -append
 
+# CSV file with all data
 $csvFile = Import-CSV -Path C:\Users\Administrator\Desktop\esxiHostsDeployment.csv
 
+# CODE TO INSTALL NFS SERVICE, CONFIGURE NFS ON DRIVE, AND ADD NFS CLIENTS, AND PERMISSION
+
+# Installs the NFS Service
+Install-WindowsFeature FS-NFS-Service -IncludeAllSubFeature -IncludeManagementTools
+
+# Creates new NFS Share
+New-NfsShare -Name 'NFS' -Path 'E:\' -EnableUnmappedAccess $True
+
+# Obtains IP Address from the CSV file to add to the  NFS Share
+foreach ($NFSRow in $csvFile)
+   {
+      $vHosts = $NFSRow.Hosts
+      $vSwitch = $NFSRow.Switch
+      $ip = $NFSRow.IP
+
+      if ($vSwitch -contains 'NFSSwitch')
+         {
+            # Configures the NFS Share
+            Grant-NfsSharePermission -Name 'NFS' -ClientName $ip -ClientType 'Host' -Permission 'readwrite' -AllowRootAccess:$false
+         }
+   }
+
+# CODE TO INSTALL ISCSI SERVICE, CONFIGURE ISCSI DISKS,AND IP ADDRESS TO TARGETNAMES, AND MAP VIRTUALDISKS TO TARGETS
+
+# INstall the iSCSI Service
+Install-WindowsFeature FS-iSCSITarget-Server -IncludeManagementTools
+
+# Creates new iSCSI Virtual Disks
+New-IscsiVirtualDisk -Path "F:\iSCSI1.vhdx" -Size 256GB
+New-IscsiVirtualDisk -Path "G:\iSCSI2.vhdx" -Size 256GB
+
+# Initiator Id address being added to the iSCSI Target Server using the format switch
+$initiatorId = $csvFile | Where-Object{ $_.VMK -match 'iSCSI1|iSCSI2'} | ForEach-Object{'IPAddress:{0}' -f $_.IP}
+
+# Creating the new iSCSI Server Target
+New-IscsiServerTarget -TargetName esxiHosts -InitiatorId $initiatorId
+
+# Mapping the Virtual Disks to the Target
+Add-IscsiVirtualDiskTargetMapping -TargetName "esxiHosts" -DevicePath "F:\iSCSI1.vhdx"
+Add-IscsiVirtualDiskTargetMapping -TargetName "esxiHosts" -DevicePath "G:\iSCSI2.vhdx"
+
+# CODE TO INSTALL ESXI HOSTS AND CONFIGURE THEIR NETWORK
+
+# Connects to the server and saves the credentials to the server
+Connect-VIServer vcsa.v.lab -User Admin -Password pass -SaveCredentials
+
+# Connects to the server using the username or password stored in the server using New-VICredentialStoreItem command
+Connect-VIServer vcsa.v.lab
+
+# Create new Datacenter
+$dc = New-Datacenter -location (Get-Folder -NoRecursion) -Name vDatacenter
+
+# Create New Clusters
+New-Cluster -Name iSCSI_Cluster -Location $dc
+New-Cluster -Name vSAN_Cluster -Location $dc
+
+# Read data from the CSV file
 foreach ($val in $csvFile)
    {
       $esxiHosts = $val.Hosts
@@ -18,22 +73,68 @@ foreach ($val in $csvFile)
       $vmK = $val.VMK
       $ip = $val.IP
 
-      Add-vmhost $esxiHosts -User root -Password "" -Location $clusterName -Force -ErrorAction SilentlyContinue
+      # Adds ESXi hosts to the Clusters
+      Add-VMHost $esxiHosts -User root -Password "" -Location $clusterName -Force -ErrorAction SilentlyContinue
 
+      # Checks if a Virtual Switch exists
       try
          {
             $gSwitch = Get-VirtualSwitch -Name $virtualSwitch -VMHost $esxiHosts -ErrorAction Stop
          }
+      # IF the switch does not exist, a new one is created
       catch
          {
             $gSwitch = New-VirtualSwitch -Name $virtualSwitch -VMHost $esxiHosts
          }
 
+      # Gets the ESxi Hosts Physical Network Adapters (vmincs)
       $nAdapter = Get-VMHostNetworkAdapter -VMHost $esxiHosts -Physical -Name $nic
+      
+      # Attachs vmnics to the Virtual Switch
       $gSwitch | Add-VirtualSwitchPhysicalNetworkAdapter -VMHostPhysicalNic $nAdapter -Confirm:$false
-      New-VMHostNetworkAdapter -VMhost $esxiHosts -PortGroup $vmK -IP $ip -subnetmask 255.255.255.0 -VirtualSwitch $gSwitch -confirm:$false *>> C:\output2.txt
+      
+      # Creates new VMKernel and adds PortGroups
+      New-VMHostNetworkAdapter -VMhost $esxiHosts -PortGroup $vmK -IP $ip -subnetmask 255.255.255.0 -VirtualSwitch $gSwitch -confirm:$false *>> C:\networkadapter_info.txt
    }
 
+# Gets all Hosts from the iSCSI Cluster
+$VMHosts = Get-Cluster "iSCSI_Cluster" | Get-VMHost
+
+# Creates new NFS Datastore attached to all the hosts in all the clusters
+Get-Cluster | Get-VMHosts | New-Datastore -Nfs -Name NFS -Path /NFS -NfsHost 192.168.3.10
+
+# Sets Teaming And Failover Policy for PortGroups for compatibility in Network Port Binding
+$VMHosts | Get-VirtualPortGroup -Name iSCSI1 | Get-NicTeamingPolicy | Set-NicTeamingPolicy -MakeNicActive vmnic3
+$VMHosts | Get-VirtualPortGroup -Name iSCSI2 | Get-NicTeamingPolicy | Set-NicTeamingPolicy -MakeNicActive vmnic4
+
+# Enables Software iSCSI Adapter for hosts
+Get-VMHostStorage -VMHost $VMHosts | Set-VMHostStorage -SoftwareIScsiEnabled $True
+
+# Rescans HBAs after enabling Software iSCSI Adapter
+$VMHosts | Get-VMHostStorage -RescanAllHba
+
+# Sets the Dynamic discovery IP address
+$VMHosts | Get-VMHosthba -Type iSCSI | New-IScsiHbaTarget -Type Send -Address 192.168.4.10
+
+# Configures Network Port Binding for iSCSI drives
+$esxcli = Get-Esxcli -VMHost ($VMHosts)
+$VMHosts | ForEach-Object -Process {
+   $esxcli = Get-EsxCli -V2 -VMHost $_
+   $bindvmk3 = @{
+      adapter = 'vmhba65'
+      force = $true
+      nic = 'vmk3'
+    }
+   $esxcli.iscsi.networkportal.add.Invoke($bindvmk3)
+   $bindvmk4 = @{
+      adapter = 'vmhba65'
+      force = $true
+      nic = 'vmk4'
+    }
+   $esxcli.iscsi.networkportal.add.Invoke($bindvmk4)
+}
+
+# Stops captures all actions
 Stop-Transcript
 
 # In Progress..
