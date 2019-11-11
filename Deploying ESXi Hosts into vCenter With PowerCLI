@@ -134,7 +134,68 @@ $VMHosts | ForEach-Object -Process {
    $esxcli.iscsi.networkportal.add.Invoke($bindvmk4)
 }
 
-# Stops captures all actions
-Stop-Transcript
+# CODE TO INSTALL ESXI HOSTS AND CONFIGURE THEIR NETWORK
+# Connects to the server without username or password that is stored in the server using New-VICredentialStoreItem -Host 192.168.4.15 -User Admin -Password pass
+Connect-VIServer vcsa.v.lab
 
-# In Progress..
+$csvFile = Import-CSV -Path C:\Users\Administrator\Desktop\esxiHostsDeployment.csv
+
+$dc = New-Datacenter -location (Get-Folder -NoRecursion) -Name vDatacenter
+New-Cluster -Name iSCSI_Cluster -Location $dc
+New-Cluster -Name vSAN_Cluster -Location $dc
+
+foreach ($val in $csvFile)
+   {
+      $esxiHosts = $val.Hosts
+      $clusterName = $val.Cluster
+      $virtualSwitch = $val.Switch
+      $nic = $val.NIC
+      $vmK = $val.VMK
+      $ip = $val.IP
+
+      Add-VMHost $esxiHosts -User root -Password "" -Location $clusterName -Force -ErrorAction SilentlyContinue
+
+      try
+         {
+            $gSwitch = Get-VirtualSwitch -Name $virtualSwitch -VMHost $esxiHosts -ErrorAction Stop
+         }
+      catch
+         {
+            $gSwitch = New-VirtualSwitch -Name $virtualSwitch -VMHost $esxiHosts
+         }
+
+      $nAdapter = Get-VMHostNetworkAdapter -VMHost $esxiHosts -Physical -Name $nic
+      $gSwitch | Add-VirtualSwitchPhysicalNetworkAdapter -VMHostPhysicalNic $nAdapter -Confirm:$false
+      New-VMHostNetworkAdapter -VMhost $esxiHosts -PortGroup $vmK -IP $ip -subnetmask 255.255.255.0 -VirtualSwitch $gSwitch -confirm:$false *>> C:\networkadapter_info.txt
+   }
+
+$VMHosts = Get-Cluster "iSCSI_Cluster" | Get-VMHost
+
+$VMHosts | New-Datastore -Nfs -Name NFS -Path /NFS -NfsHost 192.168.3.10
+
+$VMHosts | Get-VirtualPortGroup -Name iSCSI1 | Get-NicTeamingPolicy | Set-NicTeamingPolicy -MakeNicActive vmnic3
+$VMHosts | Get-VirtualPortGroup -Name iSCSI2 | Get-NicTeamingPolicy | Set-NicTeamingPolicy -MakeNicActive vmnic4
+
+Get-VMHostStorage -VMHost $VMHosts | Set-VMHostStorage -SoftwareIScsiEnabled $True
+$VMHosts | Get-VMHostStorage -RescanAllHba
+$VMHosts | Get-VMHosthba -Type iSCSI | New-IScsiHbaTarget -Type Send -Address 192.168.4.10
+
+$esxcli = Get-Esxcli -VMHost ($VMHosts)
+$VMHosts | ForEach-Object -Process {
+   $esxcli = Get-EsxCli -V2 -VMHost $_
+   $bindvmk3 = @{
+      adapter = 'vmhba65'
+      force = $true
+      nic = 'vmk3'
+    }
+   $esxcli.iscsi.networkportal.add.Invoke($bindvmk3)
+   $bindvmk4 = @{
+      adapter = 'vmhba65'
+      force = $true
+      nic = 'vmk4'
+    }
+   $esxcli.iscsi.networkportal.add.Invoke($bindvmk4)
+}
+
+# Stops capture of all actions
+Stop-Transcript
