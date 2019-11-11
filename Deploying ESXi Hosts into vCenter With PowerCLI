@@ -31,7 +31,7 @@ foreach ($NFSRow in $csvFile)
 
 # CODE TO INSTALL ISCSI SERVICE, CONFIGURE ISCSI DISKS,AND IP ADDRESS TO TARGETNAMES, AND MAP VIRTUALDISKS TO TARGETS
 
-# INstall the iSCSI Service
+# Install the iSCSI Service
 Install-WindowsFeature FS-iSCSITarget-Server -IncludeManagementTools
 
 # Creates new iSCSI Virtual Disks
@@ -101,7 +101,7 @@ foreach ($val in $csvFile)
 $VMHosts = Get-Cluster "iSCSI_Cluster" | Get-VMHost
 
 # Creates new NFS Datastore attached to all the hosts in all the clusters
-Get-Cluster | Get-VMHosts | New-Datastore -Nfs -Name NFS -Path /NFS -NfsHost 192.168.3.10
+Get-Cluster | Get-VMHost | New-Datastore -Nfs -Name NFS -Path /NFS -NfsHost 192.168.3.10
 
 # Sets Teaming And Failover Policy for PortGroups for compatibility in Network Port Binding
 $VMHosts | Get-VirtualPortGroup -Name iSCSI1 | Get-NicTeamingPolicy | Set-NicTeamingPolicy -MakeNicActive vmnic3
@@ -197,5 +197,5 @@ $VMHosts | ForEach-Object -Process {
    $esxcli.iscsi.networkportal.add.Invoke($bindvmk4)
 }
 
-# Stops capture of all actions
+# Stops captures all actions
 Stop-Transcript
