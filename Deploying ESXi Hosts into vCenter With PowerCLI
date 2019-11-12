@@ -147,11 +147,11 @@ $iSCSIDisks = $VMHosts | Get-ScsiLun -CanonicalName "naa.*" | ForEach-Object {'{
 $disknum = 1
 
 # Loop to create number Datastores based on number of iSCSI disks
-for($i = 0;$i -le $VMHosts.length;$i++)
+for($i = 0;$i -le $VMHosts.length-1;$i++)
    {
       New-Datastore -VMhost $VMHosts[$i] -Name "iSCSI$disknum" -Path $iSCSIDisks[$i] -vmfs
       $disknum+=1
-}
+   }
 
 # Create a new Datastore Cluster in the Virtual Datacenter, gets the newly created Cluster as a result in a specified format, and moves the existing iSCSI Datastores into the iSCSI Datastore Cluster
 New-DatastoreCluster -Name "iSCSIDiskCluster" -Location "vDatacenter"
