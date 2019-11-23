@@ -151,7 +151,7 @@ $iSCSIDisks = $getiSCSIVMHosts | Get-ScsiLun -CanonicalName "naa.*" | ForEach-Ob
 # Numbering disks when naming
 $disknum = 1
 
-# Loop to create number Datastores based on number of iSCSI disks
+# Loop to create Datastores based on the number of hosts configured for iSCSI storage
 For($i = 0;$i -le $getiSCSIVMHosts.length-1;$i++)
    {
       New-Datastore -VMhost $getiSCSIVMHosts[$i] -Name "iSCSIDisk$disknum" -Path $iSCSIDisks[$i] -vmfs
