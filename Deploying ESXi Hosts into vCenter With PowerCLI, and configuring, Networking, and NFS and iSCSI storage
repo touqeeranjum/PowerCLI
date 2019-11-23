@@ -173,7 +173,7 @@ $getvSANCluster | Set-Cluster -VsanEnabled $true -Confirm:$false
 # Enables vSAN traffic on the vSAN Port groups
 Get-VMHostNetworkAdapter -VMHost ($getvSANVMHosts) -VMKernel | Where {$_.PortGroupName -match "vSAN1|vSAN2"} | Set-VMHostNetworkAdapter -VsanTrafficEnabled $true -confirm:$false
 
-# Number used for disk arrays
+# Number used when adding disks from the disk array
 $disk = 0
 
 # For each ESXi Host the disk group is created
