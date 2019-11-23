@@ -16,7 +16,7 @@ Install-WindowsFeature FS-NFS-Service -IncludeAllSubFeature -IncludeManagementTo
 New-NfsShare -Name 'NFS' -Path 'E:\' -EnableUnmappedAccess $True
 
 # Obtains IP Address from the CSV file to add to the  NFS Share
-foreach ($NFSRow in $csvFile)
+Foreach ($NFSRow in $csvFile)
    {
       $vHosts = $NFSRow.Hosts
       $vSwitch = $NFSRow.Switch
@@ -76,7 +76,7 @@ foreach ($val in $csvFile)
       $vmK = $val.VMK
       $ip = $val.IP
 
-      # Adds ESXi hosts to the Clusters
+      # Adds ESXi hosts to the Clusters. Adding hosts fails if vCenter license is expired
       Add-VMHost $esxiHosts -User root -Password "" -Location $clusterName -Force -ErrorAction SilentlyContinue
 
       # Checks if a Virtual Switch exists
@@ -100,28 +100,33 @@ foreach ($val in $csvFile)
       New-VMHostNetworkAdapter -VMhost $esxiHosts -PortGroup $vmK -IP $ip -subnetmask 255.255.255.0 -VirtualSwitch $gSwitch -confirm:$false *>> C:\networkadapter_info.txt
    }
 
-# Gets all Hosts from the iSCSI Cluster
-$VMHosts = Get-Cluster "iSCSI_Cluster" | Get-VMHost
+# NFS and iSCSI datastores configuration
+
+# Variable declarations
+$getiSCSICluster = Get-Cluster -Name "iSCSI_Cluster"
+$getvSANCluster = Get-Cluster -Name "vSAN_Cluster"
+$getiSCSIVMHosts = $getiSCSICluster | Get-VMHost
+$getvSANVMHosts = $getvSANCluster | Get-VMHost
 
 # Creates new NFS Datastore attached to all the hosts in all the clusters
-Get-Cluster | Get-VMHost | New-Datastore -Nfs -Name NFS -Path /NFS -NfsHost 192.168.3.10
+Get-Cluster | Get-VMHost | New-Datastore -Nfs -Name NFSDisk -Path /NFS -NfsHost 192.168.3.10
 
 # Sets Teaming And Failover Policy for PortGroups for compatibility in Network Port Binding
-$VMHosts | Get-VirtualPortGroup -Name iSCSI1 | Get-NicTeamingPolicy | Set-NicTeamingPolicy -MakeNicActive vmnic3
-$VMHosts | Get-VirtualPortGroup -Name iSCSI2 | Get-NicTeamingPolicy | Set-NicTeamingPolicy -MakeNicActive vmnic4
+$getiSCSIVMHosts | Get-VirtualPortGroup -Name iSCSI1 | Get-NicTeamingPolicy | Set-NicTeamingPolicy -MakeNicActive vmnic3
+$getiSCSIVMHosts | Get-VirtualPortGroup -Name iSCSI2 | Get-NicTeamingPolicy | Set-NicTeamingPolicy -MakeNicActive vmnic4
 
 # Enables Software iSCSI Adapter for hosts
-Get-VMHostStorage -VMHost $VMHosts | Set-VMHostStorage -SoftwareIScsiEnabled $True
+Get-VMHostStorage -VMHost ($getiSCSIVMHosts) | Set-VMHostStorage -SoftwareIScsiEnabled $True
 
 # Sets the Dynamic discovery IP address
-$VMHosts | Get-VMHosthba -Type iSCSI | New-IScsiHbaTarget -Type Send -Address 192.168.4.10
+$getiSCSIVMHosts | Get-VMHosthba -Type iSCSI | New-IScsiHbaTarget -Type Send -Address 192.168.4.10
 
 # Update iSCSI Target connection
 Update-IscsiTarget
 
 # Configures Network Port Binding for iSCSI drives
-$esxcli = Get-Esxcli -VMHost ($VMHosts)
-$VMHosts | ForEach-Object -Process {
+$esxcli = Get-Esxcli -VMHost ($getiSCSIVMHosts)
+$getiSCSIVMHosts | ForEach-Object -Process {
    $esxcli = Get-EsxCli -V2 -VMHost $_
    $bindvmk3 = @{
       adapter = 'vmhba65'
@@ -138,26 +143,68 @@ $VMHosts | ForEach-Object -Process {
 }
 
 # Rescans HBAs after enabling Software iSCSI Adapter
-$VMHosts | Get-VMHostStorage -RescanAllHba -Refresh
+$getiSCSIVMHosts | Get-VMHostStorage -RescanAllHba -Refresh
 
 # Gets the iSCSI disks attached to the iSCSI Cluster, tne -Unique switch returns the results once only since all the servers are attached to 2 disks, results are repeated
-$iSCSIDisks = $VMHosts | Get-ScsiLun -CanonicalName "naa.*" | ForEach-Object {'{0}' -f $_.CanonicalName} | Sort-Object -Unique
+$iSCSIDisks = $getiSCSIVMHosts | Get-ScsiLun -CanonicalName "naa.*" | ForEach-Object {'{0}' -f $_.CanonicalName} | Sort-Object -Unique
 
 # Numbering disks when naming
 $disknum = 1
 
 # Loop to create number Datastores based on number of iSCSI disks
-for($i = 0;$i -le $VMHosts.length-1;$i++)
+For($i = 0;$i -le $getiSCSIVMHosts.length-1;$i++)
    {
-      New-Datastore -VMhost $VMHosts[$i] -Name "iSCSI$disknum" -Path $iSCSIDisks[$i] -vmfs
+      New-Datastore -VMhost $getiSCSIVMHosts[$i] -Name "iSCSIDisk$disknum" -Path $iSCSIDisks[$i] -vmfs
       $disknum+=1
    }
+
+# Sets Multipathing for iSCSI disks. The $_.canonicalname -like "naa.*" gets only disks that are iSCSI, this is required since these servers also have NFS disk attached them which is displayed in the result
+$getiSCSIVMHosts | Get-ScsiLun | Where {$_.canonicalname -like "naa.*" -and $_.MultipathPolicy -notlike “RoundRobin”} | Set-ScsiLun -MultipathPolicy RoundRobin
 
 # Create a new Datastore Cluster in the Virtual Datacenter, gets the newly created Cluster as a result in a specified format, and moves the existing iSCSI Datastores into the iSCSI Datastore Cluster
 New-DatastoreCluster -Name "iSCSIDiskCluster" -Location "vDatacenter"
 $DSCluster = Get-DatastoreCluster | Where {'{0}'-f $_.Name}
-$DS = $VMhosts | Get-Datastore | Where {$_.Name -match "iscsi"}
+$DS = $getiSCSIVMHosts | Get-Datastore | Where {$_.Name -match "iscsi"}
 Get-Datastore $DS | Move-Datastore -Destination $DSCluster
+
+# Enables vSAN on the vSAN Cluster
+$getvSANCluster | Set-Cluster -VsanEnabled $true -Confirm:$false
+
+# Enables vSAN traffic on the vSAN Port groups
+Get-VMHostNetworkAdapter -VMHost ($getvSANVMHosts) -VMKernel | Where {$_.PortGroupName -match "vSAN1|vSAN2"} | Set-VMHostNetworkAdapter -VsanTrafficEnabled $true -confirm:$false
+
+# Number used for disk arrays
+$disk = 0
+
+# For each ESXi Host the disk group is created
+$getvSANVMHosts | Foreach {
+
+# Gets the disks that meet the eligible criteria to be in the vSAN disk group
+$vSANDisks = $_ | Get-VMHostHba | Get-ScsiLun | Where-Object {$_.VsanStatus -eq "Eligible"}
+
+# Blank Cache and Capacity disk arrays to store cache and capacity disks
+$CacheDisks = @()
+$CapacityDisks = @()
+
+# Disks are separated based on disk size, less than 16GB disks are added to the Cache disk array, others are added to the Capacity disk array
+Foreach ($vSANDisk in $vSANDisks)
+   {
+      If ($vSANDisk.CapacityGB -lt "16")
+      {
+         $CacheDisks +=$vSANDisk
+      }
+else
+   {
+      $CapacityDisks +=$vSANDisk
+   }
+}
+
+# Disks are added to the ESXi Hosts as Disk Groups
+New-VsanDiskGroup -VMHost $_ -SSDCanonicalName $CacheDisks[$disk] -DataDiskCanonicalName $CapacityDisks[$disk]
+}
+
+# Change the default Datastore name
+Get-Datastore -Name vSandatastore | Set-Datastore -Name "vSANDisks"
 
 # Stops captures all actions
 Stop-Transcript
