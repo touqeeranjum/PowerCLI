@@ -12,7 +12,8 @@ Automation With PowerCLI for VMware Virtual Datacenter
   * ESXi hosts are deployed into their relevant cluster in vCenter
   * Standard Virtual Switches are created and added to each ESXi host
   * Each ESXi host is configured with VMNICs
-  * VMKernels are created
+  * Appropriate VMNICs are attached to Virtual Switches
+  * VMKernels are created and attached to VMNICs
   * PortGroups are created with IP addresses assigned
 
 * NFS storage is configured and attached to all ESXi hosts
