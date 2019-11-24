@@ -12,6 +12,10 @@ This project automates virtual datacenter deployment for vCenter using Standard 
   * 5 ESXi Hosts version 6.7.0.update03-14320388 VM
     * 2 disks, 1 for Cache (15GB), 1 for Capacity (256GB), per ESXi host
 
+* If the ESXi hosts are cloned in Workstation the following command must be run in each ESXi shell via SSH
+
+  *sed -i 's#/system/uuid.*##' /etc/vmware/esx.conf
+
 # vLABVMwareNetworks File
 This is the configured networks file to be imported in Workstation 15.5.1 build-15018445
 
