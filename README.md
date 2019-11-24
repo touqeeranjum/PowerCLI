@@ -27,7 +27,7 @@ This is the configured networks file to be imported in Workstation 15.5.1 build-
 # Storage
 * All 5 ESXi hosts have access to NFS storage disk on Windows Server
 * 2 of 5 ESXi hosts have access to iSCSI storage
-* 3 0f 5 ESXi hosts have access to vSAN storage
+* 3 of 5 ESXi hosts have access to vSAN storage
   
 # POWERSHELL
 * NFS and iSCSI services are installed
