@@ -9,7 +9,7 @@ This project automates virtual datacenter deployment for vCenter using Standard 
   * 1 Windows Server 2016 VM
     * 3 disks (1 for NFS, 2 for iSCSI)
   * 1 vCenter Server Appliance version 6.7.0.41000-14836122 VM
-  * 5 ESXi Hosts version 6.7.0.update03-14320388 VM
+  * 5 ESXi Hosts version 6.7.0.update03-14320388 VM with 6GB RAM each
     * 2 disks, 1 for Cache (15GB), 1 for Capacity (256GB), per ESXi host
 
 * If the ESXi hosts are cloned in Workstation the following command must be run in each ESXi shell via SSH. This will generate a new UUID for each ESXi host, if this is not done vSAN disk creation will fail
