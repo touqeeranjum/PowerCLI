@@ -34,6 +34,7 @@ This is the configured networks file to be imported in Workstation 15.5.1 build-
 * 3 of 5 ESXi hosts have access to vSAN storage
   
 # POWERSHELL
+* Server configuration script with DNS configuration for vCenter, and ESXi hosts: https://github.com/touqeeranjum/PowerShell/blob/master/AD%20Server%20Configuration%20With%20DNS%20for%20vCenter%2C%20and%20ESXi
 * NFS and iSCSI services are installed
 * Disks are configured as NFS, and iSCSI storage
 
