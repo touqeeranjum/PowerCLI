@@ -1,5 +1,4 @@
-# 09 Oct 2019
-# Script to configure NFS, iSCSI service and disks in Windows Server, and deploy Esxi Hosts into vCenter, add NIC, Virtual Switch, attach VMKernel, and add IP addresses, all from a CSV file, and finally configure NFS, iSCSI, and vSAN network storage
+# Script to configure NFS, iSCSI service and disks in Windows Server, and deploy Esxi Hosts into vCenter, add NIC, Virtual Switch, attach VMKernel, and add IP addresses, all from a CSV file, and finally configure NFS, iSCSI, and vSAN network storage with PowerCLI
 
 # Captures all actions during script runtime and saves output to a txt file
 Start-Transcript -path C:\output.txt -append
