@@ -7,8 +7,10 @@ This project automates virtual datacenter deployment for vCenter using Standard 
 
 * Virtual Machines
   * 1 Windows Server 2016 VM
+    * 3 disks (1 for NFS, 2 for iSCSI)
   * 1 vCenter Server Appliance version 6.7.0.41000-14836122 VM
   * 5 ESXi Hosts version 6.7.0.update03-14320388 VM
+    * 2 disks, 1 for Cache (15GB), 1 for Capacity (256GB), per ESXi host
 
 # vLABVMwareNetworks File
 This is the configured networks file to be imported in Workstation 15.5.1 build-15018445
@@ -23,10 +25,10 @@ This is the configured networks file to be imported in Workstation 15.5.1 build-
 * Remaining 3 ESXI hosts each have 1 NIC for vSAN, 1 NIC for vMotion, and 1 NIC for FaultTolerance
 
 # Storage
-* All 5 ESXi hosts have access to NFS storage
+* All 5 ESXi hosts have access to NFS storage disk on Windows Server
 * 2 of 5 ESXi hosts have access to iSCSI storage
 * 3 0f 5 ESXi hosts have access to vSAN storage
-
+  
 # POWERSHELL
 * NFS and iSCSI services are installed
 * Disks are configured as NFS, and iSCSI storage
