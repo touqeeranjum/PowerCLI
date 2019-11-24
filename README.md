@@ -37,7 +37,7 @@ This is the configured networks file to be imported in Workstation 15.5.1 build-
 * NFS and iSCSI services are installed
 * Disks are configured as NFS, and iSCSI storage
 
-# esxiHostsDeployments.xlsx File
+# esxiHostsDeployments.csv File
 This is the configuration deployment file to be placed in Windows Server 2016 desktop
 
 # POWERCLI
