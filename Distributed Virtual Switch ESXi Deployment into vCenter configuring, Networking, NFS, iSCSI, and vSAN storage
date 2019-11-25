@@ -1,0 +1,80 @@
+# Script to configure NFS, iSCSI service and disks in Windows Server, and deploy Esxi Hosts into vCenter, add NIC, Distributed Virtual Switch, attach VMKernel, and add IP addresses, all from a CSV file, and finally configure NFS, iSCSI, and vSAN network storage with PowerCLI
+
+# Captures all actions during script runtime and saves output to a txt file
+Start-Transcript -path C:\output.txt -append
+
+# CSV file with all data
+$csvFile = Import-CSV -Path C:\Users\Administrator\Desktop\esxiHostsDeployment.csv
+
+# INSTALL NFS SERVICE, CONFIGURE NFS ON DRIVE, AND ADD NFS CLIENTS, AND PERMISSION
+
+# Installs the NFS Service
+Install-WindowsFeature FS-NFS-Service -IncludeAllSubFeature -IncludeManagementTools
+
+# Creates new NFS Share
+New-NfsShare -Name 'NFS' -Path 'E:\' -EnableUnmappedAccess $True
+
+# Obtains IP Address from the CSV file to add to the  NFS Share
+Foreach ($NFSRow in $csvFile)
+   {
+      $vHosts = $NFSRow.Hosts
+      $vSwitch = $NFSRow.Switch
+      $ip = $NFSRow.IP
+
+      if ($vSwitch -contains 'NFSSwitch')
+         {
+            # Configures the NFS Share
+            Grant-NfsSharePermission -Name 'NFS' -ClientName $ip -ClientType 'Host' -Permission 'readwrite' -AllowRootAccess:$false
+         }
+   }
+
+# INSTALL ISCSI SERVICE, CONFIGURE ISCSI DISKS,AND IP ADDRESS TO TARGETNAMES, AND MAP VIRTUALDISKS TO TARGETS
+
+# Install the iSCSI Service
+Install-WindowsFeature FS-iSCSITarget-Server -IncludeManagementTools
+
+# Start the iSCSI service
+Start-Service msiscsi
+
+# Creates new iSCSI Virtual Disks
+New-IscsiVirtualDisk -Path "F:\iSCSI1.vhdx" -Size 256GB
+New-IscsiVirtualDisk -Path "G:\iSCSI2.vhdx" -Size 256GB
+
+# Initiator Id address being added to the iSCSI Target Server using the format switch
+$initiatorId = $csvFile | Where-Object{ $_.VMK -match 'iSCSI1|iSCSI2'} | ForEach-Object{'IPAddress:{0}' -f $_.IP}
+
+# Creating the new iSCSI Server Target
+New-IscsiServerTarget -TargetName esxiHosts -InitiatorId $initiatorId
+
+# Mapping the Virtual Disks to the Target
+Add-IscsiVirtualDiskTargetMapping -TargetName "esxiHosts" -DevicePath "F:\iSCSI1.vhdx"
+Add-IscsiVirtualDiskTargetMapping -TargetName "esxiHosts" -DevicePath "G:\iSCSI2.vhdx"
+
+# DEPLOY ESXI HOSTS AND CONFIGURE THEIR NETWORK, NFS, ISCSI, AND VSAN STORAGE
+
+# Connects to the server and saves the credentials to the server
+Connect-VIServer vcsa.v.lab -User Admin -Password pass -SaveCredentials
+
+# Connects to the server using the username or password stored in the server using New-VICredentialStoreItem command
+Connect-VIServer vcsa.v.lab
+
+# Disable participation in CEIP
+Set-PowerCLIConfiguration -Scope User -ParticipateInCEIP $false -confirm:$false
+
+$dvSwitch = "vDCSwitch"
+# Checks if a Distributed Switch exists
+try
+   {
+      $dvSwitch = Get-Datacenter -Name vDatacenter | Get-VDSwitch
+   }
+
+# If the switch does not exist, a new one is created
+catch
+   {
+      $dvSwitch = New-VDSwitch -Name $dvSwitch -Location vDatacenter -NumUplinkPorts 9 -MaxPorts 256 -Version "6.6.0" -ErrorAction SilentlyContinue
+   }
+
+# In Progress..
+
+# Stops captures all actions
+Stop-Transcript
