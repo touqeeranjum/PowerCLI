@@ -3,7 +3,7 @@ Automation With PowerCLI for VMware Virtual Datacenter
 
 This project automates virtual datacenter deployment for vCenter using Standard Virtual Switches
 
-# VMware Workstation Configuration
+# Configurations
 
 * Virtual Machines
   * 1 Windows Server 2016 VM
