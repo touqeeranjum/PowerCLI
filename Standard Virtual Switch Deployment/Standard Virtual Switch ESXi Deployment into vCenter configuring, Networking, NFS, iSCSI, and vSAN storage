@@ -80,12 +80,11 @@ foreach ($val in $csvFile)
       # Adds ESXi hosts to the Clusters. Adding hosts fails if vCenter license is expired
       Add-VMHost $esxiHosts -User root -Password "" -Location $clusterName -Force -ErrorAction SilentlyContinue
 
-      # Checks if a Virtual Switch exists
+      # Checks if a Virtual Switch exists, if not a new one is created
       try
          {
             $gSwitch = Get-VirtualSwitch -Name $virtualSwitch -VMHost $esxiHosts -ErrorAction Stop
          }
-      # IF the switch does not exist, a new one is created
       catch
          {
             $gSwitch = New-VirtualSwitch -Name $virtualSwitch -VMHost $esxiHosts
