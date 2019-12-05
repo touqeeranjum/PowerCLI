@@ -228,11 +228,11 @@ $CapacityDisks = @()
 Foreach ($vSANDisk in $vSANDisks)
    {
       If ($vSANDisk.CapacityGB -lt "16")
-      {
-         $CacheDisks +=$vSANDisk
+         {
+            $CacheDisks +=$vSANDisk
       }
-else
-      {
+      else
+         {
       $CapacityDisks +=$vSANDisk
       }
    }
