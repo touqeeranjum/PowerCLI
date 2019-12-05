@@ -1,10 +1,10 @@
-# Script to configure NFS, iSCSI service and disks in Windows Server, and deploy Esxi Hosts into vCenter, add NIC, Virtual Switch, attach VMKernel, and add IP addresses, all from a CSV file, and finally configure NFS, iSCSI, and vSAN network storage
+# Script to configure NFS, iSCSI service and disks in Windows Server, and deploy Esxi Hosts into vCenter, add NIC, Distributed Switch, attach VMKernel, and add IP addresses, all from a CSV file, and finally configure NFS, iSCSI, and vSAN network storage
 
 # Captures all actions during script runtime and saves output to a txt file
 Start-Transcript -path C:\output.txt -append
 
 # CSV file with all data
-$csvFile = Import-CSV -Path C:\Users\Administrator\Desktop\esxiHostsDeployment.csv
+$csvFile = Import-CSV -Path C:\Users\Administrator\Desktop\esxiHostsdvSwitch.csv
 
 # INSTALL NFS SERVICE, CONFIGURE NFS ON DRIVE, AND ADD NFS CLIENTS, AND PERMISSION
 
@@ -17,11 +17,10 @@ New-NfsShare -Name 'NFS' -Path 'E:\' -EnableUnmappedAccess $True
 # Obtains IP Address from the CSV file to add to the  NFS Share
 Foreach ($NFSRow in $csvFile)
    {
-      $vHosts = $NFSRow.Hosts
-      $vSwitch = $NFSRow.Switch
+      $vmk = $NFSRow.PortGroup
       $ip = $NFSRow.IP
 
-      if ($vSwitch -contains 'NFSSwitch')
+      if ($vmk -contains 'NFSPG')
          {
             # Configures the NFS Share
             Grant-NfsSharePermission -Name 'NFS' -ClientName $ip -ClientType 'Host' -Permission 'readwrite' -AllowRootAccess:$false
@@ -41,7 +40,7 @@ New-IscsiVirtualDisk -Path "F:\iSCSI1.vhdx" -Size 256GB
 New-IscsiVirtualDisk -Path "G:\iSCSI2.vhdx" -Size 256GB
 
 # Initiator Id address being added to the iSCSI Target Server using the format switch
-$initiatorId = $csvFile | Where-Object{ $_.VMK -match 'iSCSI1|iSCSI2'} | ForEach-Object{'IPAddress:{0}' -f $_.IP}
+$initiatorId = $csvFile | Where-Object{ $_.PortGroup -match 'iSCSI1PG|iSCSI2PG'} | ForEach-Object{'IPAddress:{0}' -f $_.IP}
 
 # Creating the new iSCSI Server Target
 New-IscsiServerTarget -TargetName esxiHosts -InitiatorId $initiatorId
@@ -58,25 +57,192 @@ Connect-VIServer vcsa.v.lab -User Admin -Password pass -SaveCredentials
 # Connects to the server using the username or password stored in the server using New-VICredentialStoreItem command
 Connect-VIServer vcsa.v.lab
 
-Set-PowerCLIConfiguration -Scope User -ParticipateInCEIP $false -confirm:$false
-
-# Create new Datacenter
 $dc = New-Datacenter -location (Get-Folder -NoRecursion) -Name vDatacenter
 
-# Create New Clusters
 New-Cluster -Name iSCSI_Cluster -Location $dc
 New-Cluster -Name vSAN_Cluster -Location $dc
 
+# Add Distributed Switch
 $dvSwitch = "vDCSwitch"
-# Checks if a Distributed Switch exists
+New-VDSwitch -Name $dvSwitch -Location vDatacenter -NumUplinkPorts 9 -MaxPorts 256 -Version "6.6.0"
+
+foreach ($val in $csvFile)
+   {
+      $esxiHosts = $val.Hosts
+      $clusterName = $val.Cluster
+      $nic = $val.NIC
+      $pgroup = $val.PortGroup
+      $ip = $val.IP
+      $vmk = $val.VMK
+
+      Add-VMHost $esxiHosts -User root -Password "" -Location $clusterName -Force -ErrorAction SilentlyContinue *>> C:\vmware.txt
+      Add-VDSwitchVMHost -VMHost $esxiHosts -VDSwitch $dvSwitch -ErrorAction SilentlyContinue *>> C:\vmware.txt
+      New-VDPortgroup -Name $pgroup -VDSwitch $dvSwitch -NumPorts 8 -ErrorAction SilentlyContinue *>> C:\vmware.txt
+
+      $physicalNic = Get-VMHostNetworkAdapter -VMHost $esxiHosts -Name $nic
+      $virtualNic =  Get-VMHostNetworkAdapter -VMHost $esxiHosts -Name $vmk
+
+# Checks a pNIC and vmk for 1st time creation, and then creates if it does not exist.
 try
    {
-      $dvSwitch = Get-Datacenter -Name vDatacenter | Get-VDSwitch
+      Get-VDSwitch -Name "vDCSwitch" | Add-VDSwitchPhysicalNetworkAdapter -VMHostPhysicalNic $physicalNic -VMHostVirtualNic $virtualNic -VirtualNicPortgroup $pgroup -Confirm:$false -ErrorAction SilentlyContinue *>> C:\vmware.txt
+   }
+   Catch
+   {
+      $vNic = New-VMHostNetworkAdapter -VMHost $esxiHosts -PortGroup $pgroup -VirtualSwitch $dvSwitch -IP $ip -SubnetMask 255.255.255.0 -ErrorAction SilentlyContinue
+      Get-VDSwitch -Name "vDCSwitch" | Add-VDSwitchPhysicalNetworkAdapter -VMHostPhysicalNic $physicalNic -VMHostVirtualNic $vNic -VirtualNicPortgroup $pgroup -Confirm:$false -ErrorAction SilentlyContinue *>> C:\vmware.txt
+   }
+}
+
+# Remove Virtual Switch after removing Management VMKernel (attaching it to Distributed Switch)
+Get-VMhost | Get-VirtualSwitch -Name vSwitch0 | Remove-VirtualSwitch -Confirm:$false
+
+# Variable declarations
+$getiSCSICluster = Get-Cluster -Name "iSCSI_Cluster"
+$getvSANCluster = Get-Cluster -Name "vSAN_Cluster"
+$getiSCSIVMHosts = $getiSCSICluster | Get-VMHost
+$getvSANVMHosts = $getvSANCluster | Get-VMHost
+$geVDSwitch = Get-VDswitch -Name vDCSwitch
+$getVMKernel = Get-VMHostNetworkAdapter -VMKernel
+
+# Adds a new VMKernel for Management traffic
+$getVMKernel | Where {$_.Name -match "vmk1"} | Set-VMHostNetworkAdapter -ManagementTrafficEnabled $true -Confirm:$false
+
+# Configures Portgroups with their appropriate traffic (using parameter splatting)
+$data = @(
+    @{
+        Portgroup = 'vSANPG'
+        Switch = 'vSANTrafficEnabled'
+    },
+    @{
+        Portgroup = 'vMotionPG'
+        Switch = 'vMotionEnabled'
+    },
+    @{
+        Portgroup = 'FTPG'
+        Switch = 'FaultToleranceLoggingEnabled'
+    }
+)
+
+# Applying Parameter Splatting
+foreach($entry in $data){
+    Get-VMHostNetworkAdapter -VMKernel -PortGroup $entry.Portgroup |
+    ForEach-Object -Process {
+        $sNet = @{
+            VirtualNic = $_
+            "$($entry.Switch)" = $true
+            Confirm = $false
+        }
+        Set-VMHostNetworkAdapter @sNet
+    }
+}
+
+# The above (Paramater Splatting is the same as the following
+# $getVMKernel | Where {$_.PortGroupName-match "vSANPG"} | Set-VMhostNetworkAdapter -vSANTrafficEnabled $true -Confirm:$false
+# $getVMKernel | Where {$_.PortGroupName-match "vMotionPG"} | Set-VMhostNetworkAdapter -VMotionEnabled $true -Confirm:$false
+# $getVMKernel | Where {$_.PortGroupName-match "FTPG"} | Set-VMhostNetworkAdapter -FaultToleranceLoggingEnabled $true -Confirm:$false
+
+# Making appropriate Uplinks active for based on portgroup for relevant traffic flow
+$geVDSwitch | Get-VDPortgroup "ManagementPG" | Get-VDUplinkTeamingPolicy | Set-VDUplinkTeamingPolicy -ActiveUplinkPort "dvUplink1", "dvUplink2" -UnusedUplinkPort "dvUplink3", "dvUplink4", "dvUplink5", "dvUplink6", "dvUplink7", "dvUplink8", "dvUplink9"
+$geVDSwitch | Get-VDPortgroup "NFSPG" | Get-VDUplinkTeamingPolicy | Set-VDUplinkTeamingPolicy -ActiveUplinkPort "dvUplink3" -UnusedUplinkPort "dvUplink1", "dvUplink2", "dvUplink4", "dvUplink5", "dvUplink6", "dvUplink7", "dvUplink8", "dvUplink9"
+$geVDSwitch | Get-VDPortgroup "iSCSI1PG" | Get-VDUplinkTeamingPolicy | Set-VDUplinkTeamingPolicy -ActiveUplinkPort "dvUplink4" -UnusedUplinkPort "dvUplink1", "dvUplink2", "dvUplink3", "dvUplink5", "dvUplink6", "dvUplink7", "dvUplink8", "dvUplink9"
+$geVDSwitch | Get-VDPortgroup "iSCSI2PG" | Get-VDUplinkTeamingPolicy | Set-VDUplinkTeamingPolicy -ActiveUplinkPort "dvUplink5" -UnusedUplinkPort "dvUplink1", "dvUplink2", "dvUplink3", "dvUplink4", "dvUplink6", "dvUplink7", "dvUplink8", "dvUplink9"
+$geVDSwitch | Get-VDPortgroup "vSANPG" | Get-VDUplinkTeamingPolicy | Set-VDUplinkTeamingPolicy -ActiveUplinkPort "dvUplink4", "dvUplink5" -UnusedUplinkPort "dvUplink1", "dvUplink2", "dvUplink3", "dvUplink6", "dvUplink7", "dvUplink8", "dvUplink9"
+$geVDSwitch | Get-VDPortgroup "vMotionPG" | Get-VDUplinkTeamingPolicy | Set-VDUplinkTeamingPolicy -ActiveUplinkPort "dvUplink6", "dvUplink7" -UnusedUplinkPort "dvUplink1", "dvUplink2", "dvUplink3", "dvUplink4", "dvUplink5", "dvUplink8", "dvUplink9"
+$geVDSwitch | Get-VDPortgroup "FTPG" | Get-VDUplinkTeamingPolicy | Set-VDUplinkTeamingPolicy -ActiveUplinkPort "dvUplink8", "dvUplink9" -UnusedUplinkPort "dvUplink1", "dvUplink2", "dvUplink3", "dvUplink4", "dvUplink5", "dvUplink6", "dvUplink7"
+
+# NFS, iSCSI, and vSAN datastores configuration
+
+# Creates new NFS Datastore attached to all the hosts in all the clusters
+Get-Cluster | Get-VMHost | New-Datastore -Nfs -Name NFSDisk -Path /NFS -NfsHost 192.168.3.10
+
+# Enables Software iSCSI Adapter for hosts
+Get-VMHostStorage -VMHost ($getiSCSIVMHosts) | Set-VMHostStorage -SoftwareIScsiEnabled $True
+
+# Sets the Dynamic discovery IP address
+$getiSCSIVMHosts | Get-VMHosthba -Type iSCSI | New-IScsiHbaTarget -Type Send -Address 192.168.4.10
+
+# Update iSCSI Target connection
+Update-IscsiTarget
+
+# Configures Network Port Binding for iSCSI drives
+$esxcli = Get-Esxcli -VMHost ($getiSCSIVMHosts)
+$getiSCSIVMHosts | ForEach-Object -Process {
+   $esxcli = Get-EsxCli -V2 -VMHost $_
+   $bindvmk3 = @{
+      adapter = 'vmhba65'
+      force = $true
+      nic = 'vmk3'
+    }
+   $esxcli.iscsi.networkportal.add.Invoke($bindvmk3)
+   $bindvmk4 = @{
+      adapter = 'vmhba65'
+      force = $true
+      nic = 'vmk4'
+    }
+   $esxcli.iscsi.networkportal.add.Invoke($bindvmk4)
+}
+
+# Rescans HBAs after enabling Software iSCSI Adapter
+$getiSCSIVMHosts | Get-VMHostStorage -RescanAllHba -Refresh
+
+# Gets the iSCSI disks attached to the iSCSI Cluster, the -Unique switch returns the results once only since all the servers are attached to 2 disks, results are repeated
+$iSCSIDisks = $getiSCSIVMHosts | Get-ScsiLun -CanonicalName "naa.*" | ForEach-Object {'{0}' -f $_.CanonicalName} | Sort-Object -Unique
+
+# Numbering disks when naming
+$disknum = 1
+
+# Loop to create number Datastores based on number of iSCSI disks
+For($i = 0;$i -le $getiSCSIVMHosts.length-1;$i++)
+   {
+      New-Datastore -VMhost $getiSCSIVMHosts[$i] -Name "iSCSIDisk$disknum" -Path $iSCSIDisks[$i] -vmfs
+      $disknum+=1
    }
 
-# If the switch does not exist, a new one is created
-catch
+# Sets Multipathing for iSCSI disks. The $_.canonicalname -like "naa.*" gets only disks that are iSCSI, this is required since these servers also have NFS disk attached them which is displayed in the result
+$getiSCSIVMHosts | Get-ScsiLun | Where {$_.canonicalname -like "naa.*" -and $_.MultipathPolicy -notlike “RoundRobin”} | Set-ScsiLun -MultipathPolicy RoundRobin
+
+# Create a new Datastore Cluster in the Virtual Datacenter, gets the newly created Cluster as a result in a specified format, and moves the existing iSCSI Datastores into the iSCSI Datastore Cluster
+New-DatastoreCluster -Name "iSCSIDiskCluster" -Location "vDatacenter"
+$DSCluster = Get-DatastoreCluster | Where {'{0}'-f $_.Name}
+$DS = $getiSCSIVMHosts | Get-Datastore | Where {$_.Name -match "iscsi"}
+Get-Datastore $DS | Move-Datastore -Destination $DSCluster
+
+# Enables vSAN on the vSAN Cluster
+$getvSANCluster | Set-Cluster -VsanEnabled $true -Confirm:$false
+
+# Number used for disk arrays
+$disk = 0
+
+# For each ESXi Host the disk group is created
+$getvSANVMHosts | Foreach {
+
+# Gets the disks that meet the eligible criteria to be in the vSAN disk group
+$vSANDisks = $_ | Get-VMHostHba | Get-ScsiLun | Where-Object {$_.VsanStatus -eq "Eligible"}
+
+# Blank Cache and Capacity disk arrays to store cache and capacity disks
+$CacheDisks = @()
+$CapacityDisks = @()
+
+# Disks are separated based on disk size, less than 16GB disks are added to the Cache disk array, others are added to the Capacity disk array
+Foreach ($vSANDisk in $vSANDisks)
    {
-      $dvSwitch = New-VDSwitch -Name $dvSwitch -Location vDatacenter -NumUplinkPorts 9 -MaxPorts 256 -Version "6.6.0" -ErrorAction SilentlyContinue
+      If ($vSANDisk.CapacityGB -lt "16")
+      {
+         $CacheDisks +=$vSANDisk
+      }
+else
+      {
+      $CapacityDisks +=$vSANDisk
+      }
    }
-# In Progress..
+
+# Disks are added to the ESXi Hosts as Disk Groups
+New-VsanDiskGroup -VMHost $_ -SSDCanonicalName $CacheDisks[$disk] -DataDiskCanonicalName $CapacityDisks[$disk]
+}
+
+# Change the default Datastore name
+Get-Datastore -Name vsandatastore | Set-Datastore -Name "vSANDisks"
+
+# Stops captures all actions
+Stop-Transcript
