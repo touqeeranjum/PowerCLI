@@ -14,7 +14,9 @@ This project automates virtual datacenter deployment for vCenter using Standard 
 
 * If the ESXi hosts are cloned in Workstation the following command must be run in each ESXi shell via SSH. This will generate a new UUID for each ESXi host, if this is not done vSAN disk creation will fail
 
-  *sed -i 's#/system/uuid.*##' /etc/vmware/esx.conf
+```
+sed -i 's#/system/uuid.*##' /etc/vmware/esx.conf
+```
 
 # vLABVMwareNetworks File
 This is the configured networks file to be imported in Workstation 15.5.1 build-15018445
